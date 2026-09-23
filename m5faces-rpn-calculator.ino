@@ -24,12 +24,46 @@ constexpr int kSoftKeyHeight = 72;
 constexpr int kSoftKeyWidth = 48;
 constexpr int kSoftKeyGap = 4;
 constexpr int kSoftKeyLeft = 4;
-// constexpr uint16_t kElLightGreen = 0xB7D7A4;
-constexpr uint16_t kElLightGreen = TFT_BLACK;
-// constexpr uint16_t kElDisplayGreen = 0xCBE8B9;
-constexpr uint16_t kElDisplayGreen = 0x0;
-// constexpr uint16_t kElDarkGreen = 0x1fc0a6;
-constexpr uint16_t kElDarkGreen = TFT_GREEN;
+constexpr int kDisplayX = 8;
+constexpr int kDisplayY = 27;
+constexpr int kDisplayWidth = 304;
+constexpr int kDisplayHeight = 121;
+constexpr int kSchemeBoxWidth = 80;
+constexpr int kSchemeBoxHeight = 64;
+constexpr int kSchemeBoxGap = 12;
+constexpr int kSchemeBoxLeft = 16;
+constexpr int kSchemeBoxTop = 48;
+
+constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
+{
+    return ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
+}
+
+struct ColorScheme {
+    const char* name;
+    uint16_t background;
+    uint16_t display;
+    uint16_t foreground;
+    uint16_t accent;
+    uint16_t ui_text;
+};
+
+const ColorScheme color_schemes[] = {
+    {"Green Lines", TFT_BLACK, TFT_BLACK, rgb565(0, 255, 90), rgb565(0, 255, 90), rgb565(0, 255, 90)},
+    {"Amber Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 180, 0), rgb565(255, 180, 0), rgb565(255, 180, 0)},
+    {"Blue Lines", TFT_BLACK, TFT_BLACK, rgb565(70, 175, 255), rgb565(70, 175, 255), rgb565(70, 175, 255)},
+    {"Red Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 55, 55), rgb565(255, 55, 55), rgb565(255, 55, 55)},
+    {"Yellow Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 255, 0), rgb565(255, 255, 0), rgb565(255, 255, 0)},
+    {"White Lines", TFT_BLACK, TFT_BLACK, TFT_WHITE, TFT_WHITE, TFT_WHITE},
+};
+constexpr int kColorSchemeCount = sizeof(color_schemes) / sizeof(color_schemes[0]);
+int selected_color_scheme = 0;
+bool setup_screen = false;
+
+const ColorScheme& colors()
+{
+    return color_schemes[selected_color_scheme];
+}
 
 const char* const normal_soft_key_labels[] = {"1/x", "sqrt", "sin", "cos", "tan"};
 const char* const modified_soft_key_labels[] = {"y^x", "x^2", "sin", "cos", "tan"};
@@ -193,10 +227,10 @@ bool power_y_to_x()
 void draw_soft_key(int index)
 {
     const int x = kSoftKeyLeft + index * (kSoftKeyWidth + kSoftKeyGap);
-    M5.Display.drawRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, kElDarkGreen);
+    M5.Display.drawRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, colors().accent);
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
     M5.Display.setTextDatum(middle_center);
-    M5.Display.setTextColor(kElDarkGreen, kElLightGreen);
+    M5.Display.setTextColor(colors().ui_text, colors().background);
     if (index == 5) {
         M5.Display.drawString(angle_degrees ? "DEG" : "RAD", x + kSoftKeyWidth / 2,
                               kSoftKeyY + kSoftKeyHeight / 2);
@@ -214,28 +248,27 @@ void draw_soft_key(int index)
 
 void redraw_calculator()
 {
-    M5.Display.fillScreen(kElLightGreen);
+    M5.Display.fillScreen(colors().background);
     M5.Display.setFont(&fonts::FreeMonoBold12pt7b);
     M5.Display.setTextDatum(middle_left);
-    M5.Display.setTextColor(kElDarkGreen, kElLightGreen);
+    M5.Display.setTextColor(colors().ui_text, colors().background);
     M5.Display.drawString("RPN", 8, 13);
 
     M5.Display.setTextDatum(middle_right);
-    M5.Display.setTextColor(kElDarkGreen, kElLightGreen);
+    M5.Display.setTextColor(colors().ui_text, colors().background);
     M5.Display.drawString(modifier_active ? "2nd" : "", 312, 13);
 
     // Classical calculator-style LCD area.
-    M5.Display.fillRoundRect(8, 27, 304, 121, 5, kElDisplayGreen);
-    M5.Display.drawRoundRect(8, 27, 304, 121, 5, kElDarkGreen);
+    M5.Display.drawRoundRect(kDisplayX, kDisplayY, kDisplayWidth, kDisplayHeight, 5, colors().accent);
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
     M5.Display.setTextDatum(middle_left);
-    M5.Display.setTextColor(kElDarkGreen, kElDisplayGreen);
+    M5.Display.setTextColor(colors().foreground, colors().display);
     M5.Display.drawString("T", 17, 47);
     M5.Display.drawString("Z", 17, 70);
     M5.Display.drawString("Y", 17, 93);
     M5.Display.drawString("X", 17, 126);
 
-    M5.Display.setTextColor(kElDarkGreen, kElDisplayGreen);
+    M5.Display.setTextColor(colors().foreground, colors().display);
     M5.Display.setTextDatum(middle_right);
     M5.Display.drawString(stack_depth > 3 ? format_number(stack[3]) : "", 300, 47);
     M5.Display.drawString(stack_depth > 2 ? format_number(stack[2]) : "", 300, 70);
@@ -243,7 +276,7 @@ void redraw_calculator()
 
     M5.Display.setFont(&fonts::FreeMonoBold18pt7b);
     M5.Display.setTextDatum(middle_right);
-    M5.Display.setTextColor(kElDarkGreen, kElDisplayGreen);
+    M5.Display.setTextColor(colors().foreground, colors().display);
     String x_display = calc_error ? "ERROR" : (entering ? entry : format_number(stack[0]));
     if (x_display.length() > 12) x_display.remove(12);
     M5.Display.drawString(x_display, 300, 126);
@@ -253,12 +286,50 @@ void redraw_calculator()
     }
 }
 
+void redraw_setup()
+{
+    M5.Display.fillScreen(colors().background);
+    for (int index = 0; index < kColorSchemeCount; ++index) {
+        const int column = index % 3;
+        const int row = index / 3;
+        const int x = kSchemeBoxLeft + column * (kSchemeBoxWidth + kSchemeBoxGap);
+        const int y = kSchemeBoxTop + row * (kSchemeBoxHeight + kSchemeBoxGap);
+        const bool selected = index == selected_color_scheme;
+        M5.Display.fillRoundRect(x, y, kSchemeBoxWidth, kSchemeBoxHeight, 8,
+                                color_schemes[index].foreground);
+        if (selected) {
+            M5.Display.drawRoundRect(x - 3, y - 3, kSchemeBoxWidth + 6,
+                                     kSchemeBoxHeight + 6, 10, TFT_WHITE);
+        }
+    }
+}
+
 int soft_key_at(int x, int y)
 {
     if (y < kSoftKeyY || y >= kSoftKeyY + kSoftKeyHeight) return -1;
     for (int index = 0; index < 6; ++index) {
         const int left = kSoftKeyLeft + index * (kSoftKeyWidth + kSoftKeyGap);
         if (x >= left && x < left + kSoftKeyWidth) return index;
+    }
+    return -1;
+}
+
+bool display_at(int x, int y)
+{
+    return x >= kDisplayX && x < kDisplayX + kDisplayWidth &&
+           y >= kDisplayY && y < kDisplayY + kDisplayHeight;
+}
+
+int color_scheme_at(int x, int y)
+{
+    if (x < kSchemeBoxLeft || x >= kSchemeBoxLeft + 3 * kSchemeBoxWidth + 2 * kSchemeBoxGap) return -1;
+    for (int index = 0; index < kColorSchemeCount; ++index) {
+        const int column = index % 3;
+        const int row = index / 3;
+        const int box_x = kSchemeBoxLeft + column * (kSchemeBoxWidth + kSchemeBoxGap);
+        const int box_y = kSchemeBoxTop + row * (kSchemeBoxHeight + kSchemeBoxGap);
+        if (x >= box_x && x < box_x + kSchemeBoxWidth &&
+            y >= box_y && y < box_y + kSchemeBoxHeight) return index;
     }
     return -1;
 }
@@ -344,7 +415,11 @@ void handle_key(char value)
     }
 
     if (value == '=' || value == '\n') {
-        commit_entry();       // ENTER in RPN
+        if (entering) {
+            commit_entry();   // Commit a newly typed value.
+        } else {
+            push(stack[0]);    // ENTER duplicates the current X register.
+        }
         return;
     }
 
@@ -381,7 +456,7 @@ void loop()
 {
     M5.update();
 
-    if (calculator.update()) {
+    if (!setup_screen && calculator.update()) {
         char value = calculator.getChar();
         if (value != '\0') {
             handle_key(value);
@@ -392,10 +467,22 @@ void loop()
     if (M5.Touch.getCount()) {
         const auto& touch = M5.Touch.getDetail();
         if (touch.wasClicked()) {
-            const int index = soft_key_at(touch.x, touch.y);
-            if (index >= 0) {
-                handle_soft_key(index);
-                redraw_calculator();
+            if (setup_screen) {
+                const int scheme = color_scheme_at(touch.x, touch.y);
+                if (scheme >= 0) {
+                    selected_color_scheme = scheme;
+                    setup_screen = false;
+                    redraw_calculator();
+                }
+            } else if (display_at(touch.x, touch.y)) {
+                setup_screen = true;
+                redraw_setup();
+            } else {
+                const int index = soft_key_at(touch.x, touch.y);
+                if (index >= 0) {
+                    handle_soft_key(index);
+                    redraw_calculator();
+                }
             }
         }
     }
