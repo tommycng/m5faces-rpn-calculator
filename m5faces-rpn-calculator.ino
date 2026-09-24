@@ -27,7 +27,21 @@ constexpr int kSoftKeyLeft = 4;
 constexpr int kDisplayX = 8;
 constexpr int kDisplayY = 27;
 constexpr int kDisplayWidth = 304;
-constexpr int kDisplayHeight = 121;
+constexpr int kDisplayHeight = 126;
+
+constexpr int kPanelX = 14;
+constexpr int kPanelY = 31;
+constexpr int kPanelW = 292;
+constexpr int kPanelH = 118;
+
+constexpr int kValueRight = 304;
+constexpr int kValueMax = kValueRight - 46;
+constexpr int kRowTCenter = 47;
+constexpr int kRowZCenter = 73;
+constexpr int kRowYCenter = 99;
+constexpr int kRowXCenter = 129;
+constexpr int kSmallRowHeight = 22;
+constexpr int kBigRowHeight = 30;
 constexpr int kSchemeBoxWidth = 80;
 constexpr int kSchemeBoxHeight = 64;
 constexpr int kSchemeBoxGap = 12;
@@ -39,6 +53,9 @@ constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
     return ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
 }
 
+constexpr uint16_t kFrameOuter = rgb565(52, 56, 64);
+constexpr uint16_t kFrameInner = rgb565(108, 116, 128);
+
 struct ColorScheme {
     const char* name;
     uint16_t background;
@@ -49,12 +66,12 @@ struct ColorScheme {
 };
 
 const ColorScheme color_schemes[] = {
-    {"Green Lines", TFT_BLACK, TFT_BLACK, rgb565(0, 255, 90), rgb565(0, 255, 90), rgb565(0, 255, 90)},
-    {"Amber Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 180, 0), rgb565(255, 180, 0), rgb565(255, 180, 0)},
-    {"Blue Lines", TFT_BLACK, TFT_BLACK, rgb565(70, 175, 255), rgb565(70, 175, 255), rgb565(70, 175, 255)},
-    {"Red Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 55, 55), rgb565(255, 55, 55), rgb565(255, 55, 55)},
-    {"Yellow Lines", TFT_BLACK, TFT_BLACK, rgb565(255, 255, 0), rgb565(255, 255, 0), rgb565(255, 255, 0)},
-    {"White Lines", TFT_BLACK, TFT_BLACK, TFT_WHITE, TFT_WHITE, TFT_WHITE},
+    {"Green LCD", TFT_BLACK, rgb565(8, 26, 10), rgb565(0, 255, 90), rgb565(0, 255, 90), rgb565(0, 255, 90)},
+    {"Amber LCD", TFT_BLACK, rgb565(26, 18, 4), rgb565(255, 180, 0), rgb565(255, 180, 0), rgb565(255, 180, 0)},
+    {"Blue LCD", TFT_BLACK, rgb565(4, 12, 26), rgb565(70, 175, 255), rgb565(70, 175, 255), rgb565(70, 175, 255)},
+    {"Red LCD", TFT_BLACK, rgb565(26, 6, 6), rgb565(255, 55, 55), rgb565(255, 55, 55), rgb565(255, 55, 55)},
+    {"Yellow LCD", TFT_BLACK, rgb565(24, 24, 4), rgb565(255, 255, 0), rgb565(255, 255, 0), rgb565(255, 255, 0)},
+    {"White LCD", TFT_BLACK, rgb565(18, 20, 24), TFT_WHITE, TFT_WHITE, TFT_WHITE},
 };
 constexpr int kColorSchemeCount = sizeof(color_schemes) / sizeof(color_schemes[0]);
 int selected_color_scheme = 0;
@@ -88,7 +105,152 @@ String format_number(double value)
             }
         }
     }
+
+    result.replace("e+", "E");
+    result.replace("e-", "E-");
+    result.replace('e', 'E');
+    result.replace("+", "");
     return result;
+}
+
+constexpr uint8_t kSegA = 1 << 0;
+constexpr uint8_t kSegB = 1 << 1;
+constexpr uint8_t kSegC = 1 << 2;
+constexpr uint8_t kSegD = 1 << 3;
+constexpr uint8_t kSegE = 1 << 4;
+constexpr uint8_t kSegF = 1 << 5;
+constexpr uint8_t kSegG = 1 << 6;
+
+constexpr uint8_t kSevenMasks[10] = {
+    kSegA|kSegB|kSegC|kSegD|kSegE|kSegF,        // 0
+    kSegB|kSegC,                                // 1
+    kSegA|kSegB|kSegD|kSegE|kSegG,              // 2
+    kSegA|kSegB|kSegC|kSegD|kSegG,              // 3
+    kSegB|kSegC|kSegF|kSegG,                    // 4
+    kSegA|kSegC|kSegD|kSegF|kSegG,              // 5
+    kSegA|kSegC|kSegD|kSegE|kSegF|kSegG,        // 6
+    kSegA|kSegB|kSegC,                          // 7
+    kSegA|kSegB|kSegC|kSegD|kSegE|kSegF|kSegG,  // 8
+    kSegA|kSegB|kSegC|kSegD|kSegF|kSegG,        // 9
+};
+
+uint16_t dimmed(uint16_t color, unsigned int shift)
+{
+    const uint16_t red = (color >> 11) & 0x1F;
+    const uint16_t green = (color >> 5) & 0x3F;
+    const uint16_t blue = color & 0x1F;
+    const unsigned int s = shift > 5 ? 5 : shift;
+    return (uint16_t)(((red >> s) << 11) | ((green >> s) << 5) | (blue >> s));
+}
+
+// Draws a single seven-segment glyph into a cell of width/height at (x0, y0).
+// Lit segments use on_color; unlit ones use off_color so the ghost segments
+// show through the LCD glass, as on a real display.
+void draw_seven_char(int x0, int y0, int w, int h, int t, char c,
+                     uint16_t on_color, uint16_t off_color)
+{
+    uint8_t mask = 0;
+    bool separator = false;
+    if (c >= '0' && c <= '9') {
+        mask = kSevenMasks[c - '0'];
+    } else {
+        switch (c) {
+            case '.': separator = true; break;
+            case '-': mask = kSegG; break;
+            case 'E': mask = kSegA|kSegD|kSegE|kSegF|kSegG; break;
+            case 'r': mask = kSegE|kSegG; break;
+            case 'O': mask = kSegA|kSegB|kSegC|kSegD|kSegE|kSegF; break;
+            case 'H': mask = kSegB|kSegC|kSegE|kSegF|kSegG; break;
+            case 'L': mask = kSegD|kSegE|kSegF; break;
+            case 'P': mask = kSegA|kSegB|kSegE|kSegF|kSegG; break;
+            case 't': mask = kSegD|kSegE|kSegG; break;
+            default: mask = 0; break;
+        }
+    }
+
+    const int vlen = max(2, (h - 3 * t) / 2);
+    const int lower_y = y0 + h - t - vlen;
+    const int right_x = x0 + w - 2 * t;
+
+    if (separator) {
+        M5.Display.fillRect(x0, y0 + h - t, w, t, on_color);
+        return;
+    }
+
+    if (mask) {
+        if (mask & kSegA) M5.Display.fillRect(x0 + t, y0, w - 3 * t, t, on_color);
+        else M5.Display.fillRect(x0 + t, y0, w - 3 * t, t, off_color);
+
+        if (mask & kSegG) M5.Display.fillRect(x0 + t, y0 + h / 2 - t / 2, w - 3 * t, t, on_color);
+        else M5.Display.fillRect(x0 + t, y0 + h / 2 - t / 2, w - 3 * t, t, off_color);
+
+        if (mask & kSegD) M5.Display.fillRect(x0 + t, y0 + h - t, w - 3 * t, t, on_color);
+        else M5.Display.fillRect(x0 + t, y0 + h - t, w - 3 * t, t, off_color);
+
+        if (mask & kSegF) M5.Display.fillRect(x0, y0 + t, t, vlen, on_color);
+        else M5.Display.fillRect(x0, y0 + t, t, vlen, off_color);
+
+        if (mask & kSegE) M5.Display.fillRect(x0, lower_y, t, vlen, on_color);
+        else M5.Display.fillRect(x0, lower_y, t, vlen, off_color);
+
+        if (mask & kSegB) M5.Display.fillRect(right_x, y0 + t, t, vlen, on_color);
+        else M5.Display.fillRect(right_x, y0 + t, t, vlen, off_color);
+
+        if (mask & kSegC) M5.Display.fillRect(right_x, lower_y, t, vlen, on_color);
+        else M5.Display.fillRect(right_x, lower_y, t, vlen, off_color);
+    }
+
+    M5.Display.fillRect(right_x, y0 + h - t, t, t, off_color);
+}
+
+int seven_width(int height)
+{
+    const int t = max(2, height / 9);
+    const int vlen = max(2, (height - 3 * t) / 2);
+    return vlen + 2 * t + 1;
+}
+
+// Total width of a value at a given glyph height; '.' separators get a narrow
+// cell so the dot nests tightly between digit cells.
+int seven_string_width(const String& text, int height)
+{
+    constexpr int kGap = 3;
+    const int t = max(2, height / 9);
+    const int w = seven_width(height);
+    int total = 0;
+    for (int i = 0; i < text.length(); ++i) {
+        total += (text[i] == '.' ? t : w) + kGap;
+    }
+    return total - kGap;
+}
+
+// Right-aligns a seven-segment value to right_x, growing the glyph size up to
+// base_height while shrinking it to fit an available width of max_w.
+void draw_seven_string(const String& text, int right_x, int center_y, int max_w,
+                       int base_height, uint16_t on_color, uint16_t off_color)
+{
+    const int count = text.length();
+    if (count == 0) return;
+    constexpr int kGap = 3;
+
+    int height = base_height;
+    for (;;) {
+        if (seven_string_width(text, height) <= max_w || height <= 8) break;
+        height -= 2;
+    }
+    const int w = seven_width(height);
+    const int t = max(2, height / 9);
+
+    int x = right_x - seven_string_width(text, height);
+    if (x < kPanelX + 28) x = kPanelX + 28;
+
+    const int y0 = center_y - height / 2;
+    for (int i = 0; i < count; ++i) {
+        const bool dot = text[i] == '.';
+        const int cw = dot ? t : w;
+        draw_seven_char(x, y0, cw, height, t, text[i], on_color, off_color);
+        x += cw + kGap;
+    }
 }
 
 void push(double v) {
@@ -249,37 +411,56 @@ void draw_soft_key(int index)
 void redraw_calculator()
 {
     M5.Display.fillScreen(colors().background);
+
     M5.Display.setFont(&fonts::FreeMonoBold12pt7b);
     M5.Display.setTextDatum(middle_left);
     M5.Display.setTextColor(colors().ui_text, colors().background);
-    M5.Display.drawString("RPN", 8, 13);
+    M5.Display.drawString("RPN", 8, 15);
 
     M5.Display.setTextDatum(middle_right);
     M5.Display.setTextColor(colors().ui_text, colors().background);
-    M5.Display.drawString(modifier_active ? "2nd" : "", 312, 13);
+    M5.Display.drawString(modifier_active ? "2nd" : "", 312, 15);
 
-    // Classical calculator-style LCD area.
-    M5.Display.drawRoundRect(kDisplayX, kDisplayY, kDisplayWidth, kDisplayHeight, 5, colors().accent);
+    // LCD bezel and glass panel.
+    M5.Display.fillRoundRect(kDisplayX, kDisplayY, kDisplayWidth, kDisplayHeight, 6, kFrameOuter);
+    M5.Display.fillRoundRect(kDisplayX + 3, kDisplayY + 3, kDisplayWidth - 6, kDisplayHeight - 6, 4, kFrameInner);
+    M5.Display.fillRoundRect(kPanelX, kPanelY, kPanelW, kPanelH, 3, colors().display);
+    M5.Display.fillRect(kPanelX, kPanelY, kPanelW, 2, dimmed(colors().display, 1));
+    M5.Display.fillRect(kPanelX, kPanelY + kPanelH - 2, kPanelW, 2, dimmed(colors().display, 1));
+
+    const uint16_t ghost = dimmed(colors().foreground, 2);
+    const uint16_t grid = dimmed(colors().foreground, 5);
+
+    // Printed-glass register labels.
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
     M5.Display.setTextDatum(middle_left);
-    M5.Display.setTextColor(colors().foreground, colors().display);
-    M5.Display.drawString("T", 17, 47);
-    M5.Display.drawString("Z", 17, 70);
-    M5.Display.drawString("Y", 17, 93);
-    M5.Display.drawString("X", 17, 126);
+    M5.Display.setTextColor(ghost, colors().display);
+    M5.Display.drawString("T", 18, kRowTCenter);
+    M5.Display.drawString("Z", 18, kRowZCenter);
+    M5.Display.drawString("Y", 18, kRowYCenter);
+    M5.Display.drawString("X", 18, kRowXCenter);
 
-    M5.Display.setTextColor(colors().foreground, colors().display);
-    M5.Display.setTextDatum(middle_right);
-    M5.Display.drawString(stack_depth > 3 ? format_number(stack[3]) : "", 300, 47);
-    M5.Display.drawString(stack_depth > 2 ? format_number(stack[2]) : "", 300, 70);
-    M5.Display.drawString(stack_depth > 1 ? format_number(stack[1]) : "", 300, 93);
+    // Subtle register separators on the glass.
+    M5.Display.drawFastHLine(kPanelX + 4, kRowZCenter - kSmallRowHeight / 2 - 1, kPanelW - 8, grid);
+    M5.Display.drawFastHLine(kPanelX + 4, kRowZCenter + kSmallRowHeight / 2 + 1, kPanelW - 8, grid);
+    M5.Display.drawFastHLine(kPanelX + 4, kRowYCenter + kSmallRowHeight / 2 + 1, kPanelW - 8, grid);
 
-    M5.Display.setFont(&fonts::FreeMonoBold18pt7b);
-    M5.Display.setTextDatum(middle_right);
-    M5.Display.setTextColor(colors().foreground, colors().display);
+    if (stack_depth > 3) {
+        draw_seven_string(format_number(stack[3]), kValueRight, kRowTCenter, kValueMax,
+                          kSmallRowHeight, colors().foreground, ghost);
+    }
+    if (stack_depth > 2) {
+        draw_seven_string(format_number(stack[2]), kValueRight, kRowZCenter, kValueMax,
+                          kSmallRowHeight, colors().foreground, ghost);
+    }
+    if (stack_depth > 1) {
+        draw_seven_string(format_number(stack[1]), kValueRight, kRowYCenter, kValueMax,
+                          kSmallRowHeight, colors().foreground, ghost);
+    }
+
     String x_display = calc_error ? "ERROR" : (entering ? entry : format_number(stack[0]));
-    if (x_display.length() > 12) x_display.remove(12);
-    M5.Display.drawString(x_display, 300, 126);
+    draw_seven_string(x_display, kValueRight, kRowXCenter, kValueMax,
+                      kBigRowHeight, colors().foreground, ghost);
 
     for (int index = 0; index < 6; ++index) {
         draw_soft_key(index);

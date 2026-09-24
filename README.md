@@ -33,9 +33,13 @@ The six touch keys below the display provide:
 
 With `M` active, the touch keys provide `y^x`, `x^2`, and the inverse trigonometric functions.
 
+## Display
+
+The four-register stack is shown on a simulated LCD screen. A plastic bezel surrounds a tinted glass panel in which the register values are rendered with a custom seven-segment font: lit segments use the bright foreground color, while unlit ghost segments stay faintly visible through the glass, just like a real LCD. Long values shrink the glyphs automatically so they always fit, and results too large for fixed-point display are shown in seven-segment scientific notation (for example `1E20`).
+
 ## Display Settings
 
-Tap the calculator display to open the color settings screen. Select one of the six color boxes to immediately apply the corresponding outline color and return to the calculator:
+Tap the calculator display to open the color settings screen. Select one of the six color boxes to immediately apply the corresponding LCD look and return to the calculator:
 
 - Green
 - Amber
@@ -44,4 +48,4 @@ Tap the calculator display to open the color settings screen. Select one of the 
 - Yellow
 - White
 
-The calculator uses a black background with colored lines and text for the selected scheme.
+Each scheme recolors the LCD foreground, the off-segment ghosts, and the glass tint. The calculator uses a black background with the selected color for the screen and soft keys.
