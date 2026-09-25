@@ -39,10 +39,10 @@ The four-register stack is shown on a simulated LCD screen. A plastic bezel surr
 
 ## Display Settings
 
-Tap the calculator display to open the color settings screen. Select one of the six color boxes to immediately apply the corresponding LCD look and return to the calculator:
+Hardware button A cycles to the next color scheme, while button C cycles to the previous scheme. Alternatively, tap the calculator display to open the color settings screen and select one of the six color boxes:
 
 - Green
-- Amber
+- Purple
 - Blue
 - Red
 - Yellow

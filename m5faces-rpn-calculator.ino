@@ -53,8 +53,8 @@ constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
     return ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
 }
 
-constexpr uint16_t kFrameOuter = rgb565(52, 56, 64);
-constexpr uint16_t kFrameInner = rgb565(108, 116, 128);
+constexpr uint16_t kFrameOuter = rgb565(180, 180, 180);
+constexpr uint16_t kFrameInner = rgb565(220, 220, 220);
 
 struct ColorScheme {
     const char* name;
@@ -67,7 +67,7 @@ struct ColorScheme {
 
 const ColorScheme color_schemes[] = {
     {"Green LCD", TFT_BLACK, rgb565(8, 26, 10), rgb565(0, 255, 90), rgb565(0, 255, 90), rgb565(0, 255, 90)},
-    {"Amber LCD", TFT_BLACK, rgb565(26, 18, 4), rgb565(255, 180, 0), rgb565(255, 180, 0), rgb565(255, 180, 0)},
+    {"Purple LCD", TFT_BLACK, rgb565(26, 10, 38), rgb565(180, 80, 255), rgb565(180, 80, 255), rgb565(180, 80, 255)},
     {"Blue LCD", TFT_BLACK, rgb565(4, 12, 26), rgb565(70, 175, 255), rgb565(70, 175, 255), rgb565(70, 175, 255)},
     {"Red LCD", TFT_BLACK, rgb565(26, 6, 6), rgb565(255, 55, 55), rgb565(255, 55, 55), rgb565(255, 55, 55)},
     {"Yellow LCD", TFT_BLACK, rgb565(24, 24, 4), rgb565(255, 255, 0), rgb565(255, 255, 0), rgb565(255, 255, 0)},
@@ -141,6 +141,16 @@ uint16_t dimmed(uint16_t color, unsigned int shift)
     const uint16_t blue = color & 0x1F;
     const unsigned int s = shift > 5 ? 5 : shift;
     return (uint16_t)(((red >> s) << 11) | ((green >> s) << 5) | (blue >> s));
+}
+
+uint16_t with_brightness(uint16_t color, uint16_t percent)
+{
+    const uint16_t red = ((color >> 11) & 0x1F) * percent;
+    const uint16_t green = ((color >> 5) & 0x3F) * percent;
+    const uint16_t blue = (color & 0x1F) * percent;
+    return (uint16_t)((((red + 127) / 255) << 11) |
+                      (((green + 127) / 255) << 5) |
+                      ((blue + 127) / 255));
 }
 
 // Draws a single seven-segment glyph into a cell of width/height at (x0, y0).
@@ -389,10 +399,11 @@ bool power_y_to_x()
 void draw_soft_key(int index)
 {
     const int x = kSoftKeyLeft + index * (kSoftKeyWidth + kSoftKeyGap);
-    M5.Display.drawRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, colors().accent);
+    const uint16_t soft_key_background = with_brightness(colors().accent, 50);
+    M5.Display.fillRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, soft_key_background);
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
     M5.Display.setTextDatum(middle_center);
-    M5.Display.setTextColor(colors().ui_text, colors().background);
+    M5.Display.setTextColor(colors().background, soft_key_background);
     if (index == 5) {
         M5.Display.drawString(angle_degrees ? "DEG" : "RAD", x + kSoftKeyWidth / 2,
                               kSoftKeyY + kSoftKeyHeight / 2);
@@ -636,6 +647,16 @@ void setup()
 void loop()
 {
     M5.update();
+
+    if (M5.BtnA.wasClicked()) {
+        selected_color_scheme = (selected_color_scheme + 1) % kColorSchemeCount;
+        if (setup_screen) redraw_setup();
+        else redraw_calculator();
+    } else if (M5.BtnC.wasClicked()) {
+        selected_color_scheme = (selected_color_scheme + kColorSchemeCount - 1) % kColorSchemeCount;
+        if (setup_screen) redraw_setup();
+        else redraw_calculator();
+    }
 
     if (!setup_screen && calculator.update()) {
         char value = calculator.getChar();
