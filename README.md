@@ -43,10 +43,10 @@ Only the part of the screen that changed is repainted: a keypress redraws the re
 
 ## Display Settings
 
-Button B opens the color settings screen, and pressing it again returns to the calculator. Hardware button A cycles to the next color scheme, while button C cycles to the previous scheme, and either works while the settings screen is open. Select one of the six numbered color boxes by tapping it, which also returns to the calculator:
+Button B opens the color settings screen, and pressing it again returns to the calculator. Hardware button A cycles to the next color scheme, while button C cycles to the previous scheme, and either works while the settings screen is open. Each of the six boxes holds a thumbnail of the calculator screen drawn in that scheme, bezel, tinted glass, register rows, sample values and touch keys included, so the glass color and the value renderer can both be judged before choosing. The scheme number sits in the thumbnail's title strip where the real screen shows `RPN`. The active scheme is outlined in its accent color, and tapping a box selects it and returns to the calculator:
 
 1. Green electroluminescence, seven-segment
-2. Green electroluminescence, 5x7 dot matrix
+2. Green electroluminescence, 5x7 dot matrix (the default)
 3. Red LED
 4. Purple LED
 5. Blue LED

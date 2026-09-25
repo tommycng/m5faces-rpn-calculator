@@ -100,7 +100,9 @@ const ColorScheme color_schemes[] = {
     {"LCD",        false, rgb565(8, 9, 8),     rgb565(163, 189, 122), rgb565(24, 30, 20),   rgb565(120, 200, 96),  rgb565(214, 226, 190)},
 };
 constexpr int kColorSchemeCount = sizeof(color_schemes) / sizeof(color_schemes[0]);
-int selected_color_scheme = 0;
+// The dot matrix face is the one that suits the stock M5Faces cover, so it is
+// what the calculator shows until a palette is chosen.
+int selected_color_scheme = 1;
 bool setup_screen = false;
 
 // Screen regions to repaint on the next incremental redraw. A full redraw
@@ -186,14 +188,24 @@ uint16_t mix_color(uint16_t a, uint16_t b, uint16_t percent)
 }
 
 // Unlit segment and dot color: a hint of the foreground seen through the glass.
+uint16_t ghost_color_for(const ColorScheme& scheme)
+{
+    return mix_color(scheme.display, scheme.foreground, 18);
+}
+
 uint16_t ghost_color()
 {
-    return mix_color(colors().display, colors().foreground, 18);
+    return ghost_color_for(colors());
+}
+
+uint16_t grid_color_for(const ColorScheme& scheme)
+{
+    return mix_color(scheme.display, scheme.foreground, 10);
 }
 
 uint16_t grid_color()
 {
-    return mix_color(colors().display, colors().foreground, 10);
+    return grid_color_for(colors());
 }
 
 // Draws a single seven-segment glyph into a cell of width/height at (x0, y0).
@@ -210,6 +222,7 @@ void draw_seven_char(int x0, int y0, int w, int h, int t, char c,
         switch (c) {
             case '.': separator = true; break;
             case '-': mask = kSegG; break;
+            case '+': mask = kSegB|kSegF|kSegG; break;
             case 'E': mask = kSegA|kSegD|kSegE|kSegF|kSegG; break;
             // A seven-segment cell cannot spell a capital R, so it borrows the
             // conventional lowercase-r form that real LCDs use for "ErrOr".
@@ -281,9 +294,11 @@ int seven_string_width(const String& text, int height)
 }
 
 // Right-aligns a seven-segment value to right_x, growing the glyph size up to
-// base_height while shrinking it to fit an available width of max_w.
+// base_height while shrinking it to fit an available width of max_w. The text
+// never starts left of left_x, which is how the palette previews reuse this
+// renderer for their much smaller glass panels.
 void draw_seven_string(const String& text, int right_x, int center_y, int max_w,
-                       int base_height, uint16_t on_color, uint16_t off_color)
+                       int base_height, int left_x, uint16_t on_color, uint16_t off_color)
 {
     const int count = text.length();
     if (count == 0) return;
@@ -298,7 +313,7 @@ void draw_seven_string(const String& text, int right_x, int center_y, int max_w,
     const int t = max(2, height / 9);
 
     int x = right_x - seven_string_width(text, height);
-    if (x < kPanelX + 28) x = kPanelX + 28;
+    if (x < left_x) x = left_x;
 
     const int y0 = center_y - height / 2;
     for (int i = 0; i < count; ++i) {
@@ -312,7 +327,8 @@ void draw_seven_string(const String& text, int right_x, int center_y, int max_w,
 // Classic 5x7 dot matrix font: five column bytes per glyph, bit 0 is the top
 // dot. The leading space doubles as the fallback for unsupported characters.
 // Lowercase glyphs sit on the bottom five rows, with ascenders reaching row 0.
-const char kDotFontChars[] = " 0123456789.:+-EROnd";
+// The order here must match the table below, glyph for glyph.
+const char kDotFontChars[] = " 0123456789.:-+EROnd";
 const uint8_t kDotFont[][5] = {
     {0x00, 0x00, 0x00, 0x00, 0x00},  // ' '
     {0x3E, 0x51, 0x49, 0x45, 0x3E},  // '0'
@@ -335,6 +351,8 @@ const uint8_t kDotFont[][5] = {
     {0x78, 0x04, 0x04, 0x04, 0x7C},  // 'n'
     {0x78, 0x44, 0x44, 0x04, 0x7F},  // 'd'
 };
+static_assert(sizeof(kDotFont) / sizeof(kDotFont[0]) == sizeof(kDotFontChars) - 1,
+              "kDotFont needs one glyph per character in kDotFontChars, in the same order");
 
 const uint8_t* dot_glyph(char c)
 {
@@ -357,9 +375,9 @@ int dot_string_width(int count, int scale)
 // Right-aligns a dot matrix value to right_x, shrinking the dot scale from
 // base_scale down to 1 until the text fits an available width of max_w. Each
 // dot is drawn one pixel smaller than its slot so the gaps between dots keep
-// the pixel grid visible.
+// the pixel grid visible. The text never starts left of left_x.
 void draw_dot_string(const String& text, int right_x, int center_y, int max_w,
-                     int base_scale, uint16_t on_color, uint16_t off_color)
+                     int base_scale, int left_x, uint16_t on_color, uint16_t off_color)
 {
     const int count = text.length();
     if (count == 0) return;
@@ -368,7 +386,7 @@ void draw_dot_string(const String& text, int right_x, int center_y, int max_w,
     while (scale > 1 && dot_string_width(count, scale) > max_w) --scale;
 
     int x = right_x - dot_string_width(count, scale);
-    if (x < kPanelX + 8) x = kPanelX + 8;
+    if (x < left_x) x = left_x;
     const int y0 = center_y - 7 * scale / 2;
     const int dot = max(1, scale - 1);
 
@@ -390,9 +408,11 @@ void draw_value(const String& text, int center_y, int height,
                 uint16_t on_color, uint16_t off_color)
 {
     if (colors().dot_matrix) {
-        draw_dot_string(text, kValueRight, center_y, kValueMax, height / 7, on_color, off_color);
+        draw_dot_string(text, kValueRight, center_y, kValueMax, height / 7, kPanelX + 8,
+                        on_color, off_color);
     } else {
-        draw_seven_string(text, kValueRight, center_y, kValueMax, height, on_color, off_color);
+        draw_seven_string(text, kValueRight, center_y, kValueMax, height, kPanelX + 28,
+                          on_color, off_color);
     }
 }
 
@@ -698,6 +718,85 @@ void redraw_dirty()
     M5.Display.endWrite();
 }
 
+// Layout of the thumbnail screen drawn inside each color scheme box. It is a
+// miniature of the calculator: a bezel, the tinted glass with its four register
+// rows, then a strip of touch keys below the panel.
+constexpr int kPreviewWidth = 68;
+constexpr int kPreviewHeight = 56;
+constexpr int kPreviewBezel = 2;
+constexpr int kPreviewHeader = 7;
+constexpr int kPreviewSmallRow = 8;
+constexpr int kPreviewBigRow = 14;
+constexpr int kPreviewKeyStrip = 6;
+constexpr int kPreviewKeyCount = 6;
+constexpr int kPreviewKeyGap = 1;
+
+// Sample register values for the thumbnails, chosen so both renderers show a
+// decimal point and a couple of digits.
+const char* const kPreviewValues[] = {"12", "8.8", "8.8", "3.14"};
+
+// Draws one thumbnail of the calculator screen in the given color scheme, with
+// its top-left corner at (x, y). The value renderer follows the scheme, so the
+// seven-segment and dot matrix faces are told apart at a glance.
+void draw_scheme_preview(int x, int y, const ColorScheme& scheme, int index)
+{
+    const int px = x + (kSchemeBoxWidth - kPreviewWidth) / 2;
+    const int py = y + (kSchemeBoxHeight - kPreviewHeight) / 2;
+    const uint16_t ghost = ghost_color_for(scheme);
+    const uint16_t grid = grid_color_for(scheme);
+
+    M5.Display.fillRoundRect(px, py, kPreviewWidth, kPreviewHeight, 3, kFrameOuter);
+    M5.Display.fillRoundRect(px + 1, py + 1, kPreviewWidth - 2, kPreviewHeight - 2, 2, kFrameInner);
+
+    const int panel_x = px + kPreviewBezel;
+    const int panel_y = py + kPreviewBezel;
+    const int panel_w = kPreviewWidth - 2 * kPreviewBezel;
+    const int panel_h = kPreviewHeight - 2 * kPreviewBezel;
+    M5.Display.fillRoundRect(panel_x, panel_y, panel_w, panel_h, 1, scheme.display);
+
+    // Title strip, carrying the scheme number where the real screen shows RPN.
+    M5.Display.fillRect(panel_x, panel_y, panel_w, kPreviewHeader, scheme.background);
+    const uint8_t* number = dot_glyph('1' + index);
+    for (int col = 0; col < 5; ++col) {
+        for (int row = 0; row < 7; ++row) {
+            if (number[col] & (1 << row)) {
+                M5.Display.fillRect(panel_x + 3 + col, panel_y + row, 1, 1, scheme.ui_text);
+            }
+        }
+    }
+
+    // Register rows, the lowest one taller like the real X band.
+    int center = panel_y + kPreviewHeader;
+    for (int row = 0; row < 4; ++row) {
+        const int height = row == 3 ? kPreviewBigRow : kPreviewSmallRow;
+        const int row_center = center + height / 2;
+        const int row_right = panel_x + panel_w - 3;
+        const String value = kPreviewValues[row];
+        if (scheme.dot_matrix) {
+            draw_dot_string(value, row_right, row_center, panel_w - 6, height / 7,
+                            panel_x + 3, scheme.foreground, ghost);
+        } else {
+            draw_seven_string(value, row_right, row_center, panel_w - 6, height,
+                              panel_x + 3, scheme.foreground, ghost);
+        }
+        center += height;
+        if (row == 2) {
+            M5.Display.fillRect(panel_x + 2, center - 1, panel_w - 4, 1, grid);
+        }
+    }
+
+    // Touch keys sit on the background below the glass, as they do on the real
+    // screen. They are too small for labels, so they stay as plain blocks.
+    const int strip_y = center + 1;
+    M5.Display.fillRect(panel_x, strip_y, panel_w, kPreviewKeyStrip, scheme.background);
+    const int key_w = (panel_w - (kPreviewKeyCount - 1) * kPreviewKeyGap) / kPreviewKeyCount;
+    const int key_y = strip_y + (kPreviewKeyStrip - 3) / 2;
+    for (int i = 0; i < kPreviewKeyCount; ++i) {
+        const int key_x = panel_x + 2 + i * (key_w + kPreviewKeyGap);
+        M5.Display.fillRect(key_x, key_y, key_w, 3, kSoftKeyFace);
+    }
+}
+
 void redraw_setup()
 {
     M5.Display.startWrite();
@@ -710,11 +809,7 @@ void redraw_setup()
         const bool selected = index == selected_color_scheme;
         M5.Display.fillRoundRect(x, y, kSchemeBoxWidth, kSchemeBoxHeight, 8,
                                 color_schemes[index].display);
-        M5.Display.setFont(&fonts::FreeMonoBold12pt7b);
-        M5.Display.setTextDatum(middle_center);
-        M5.Display.setTextColor(color_schemes[index].foreground, color_schemes[index].display);
-        M5.Display.drawString(String(index + 1), x + kSchemeBoxWidth / 2,
-                              y + kSchemeBoxHeight / 2);
+        draw_scheme_preview(x, y, color_schemes[index], index);
         if (selected) {
             M5.Display.drawRoundRect(x - 3, y - 3, kSchemeBoxWidth + 6,
                                      kSchemeBoxHeight + 6, 10, color_schemes[index].accent);
