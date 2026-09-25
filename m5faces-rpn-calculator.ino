@@ -19,6 +19,8 @@ bool modifier_active = false;
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kDegreesToRadians = kPi / 180.0;
+// Below this magnitude a value is shown in scientific notation.
+constexpr double kSmallValueThreshold = 0.0001;
 constexpr int kSoftKeyY = 160;
 constexpr int kSoftKeyHeight = 72;
 constexpr int kSoftKeyWidth = 48;
@@ -47,6 +49,27 @@ constexpr int kSchemeBoxHeight = 64;
 constexpr int kSchemeBoxGap = 12;
 constexpr int kSchemeBoxLeft = 16;
 constexpr int kSchemeBoxTop = 48;
+constexpr int kScreenWidth = 320;
+constexpr int kHeaderTop = 2;
+constexpr int kHeaderHeight = 24;
+constexpr int kHeaderCenter = 15;
+
+// Registers are painted one band at a time so that a value change only
+// repaints the glass it sits on instead of rebuilding the whole screen.
+struct RegisterRow {
+    const char* label;
+    int center_y;
+    int height;
+    int index;   // stack slot; index 0 is X and is always shown
+};
+
+const RegisterRow kRegisterRows[] = {
+    {"T", kRowTCenter, kSmallRowHeight, 3},
+    {"Z", kRowZCenter, kSmallRowHeight, 2},
+    {"Y", kRowYCenter, kSmallRowHeight, 1},
+    {"X", kRowXCenter, kBigRowHeight, 0},
+};
+constexpr int kRegisterRowCount = sizeof(kRegisterRows) / sizeof(kRegisterRows[0]);
 
 constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
 {
@@ -60,6 +83,7 @@ constexpr uint16_t kSoftKeyText = rgb565(20, 20, 22);
 
 struct ColorScheme {
     const char* name;
+    bool dot_matrix;
     uint16_t background;
     uint16_t display;
     uint16_t foreground;
@@ -68,16 +92,22 @@ struct ColorScheme {
 };
 
 const ColorScheme color_schemes[] = {
-    {"EL Green",   rgb565(4, 10, 8),    rgb565(8, 30, 20),     rgb565(96, 255, 176), rgb565(64, 224, 152),  rgb565(200, 240, 216)},
-    {"Amber LED",  rgb565(12, 7, 2),    rgb565(30, 17, 4),     rgb565(255, 172, 32), rgb565(255, 176, 48),  rgb565(255, 214, 154)},
-    {"Red LED",    rgb565(12, 4, 4),    rgb565(30, 7, 6),      rgb565(255, 56, 40),  rgb565(255, 72, 56),   rgb565(255, 200, 192)},
-    {"Purple LED", rgb565(9, 5, 15),    rgb565(24, 11, 36),    rgb565(186, 92, 255), rgb565(170, 100, 255), rgb565(226, 206, 255)},
-    {"Blue LED",   rgb565(3, 7, 15),    rgb565(6, 15, 32),     rgb565(64, 160, 255), rgb565(72, 168, 255),  rgb565(198, 226, 255)},
-    {"LCD",        rgb565(8, 9, 8),     rgb565(163, 189, 122), rgb565(24, 30, 20),   rgb565(120, 200, 96),  rgb565(214, 226, 190)},
+    {"EL Green",   false, rgb565(4, 10, 8),    rgb565(8, 30, 20),     rgb565(96, 255, 176), rgb565(64, 224, 152),  rgb565(200, 240, 216)},
+    {"EL Dot",     true,  rgb565(4, 10, 8),    rgb565(8, 30, 20),     rgb565(96, 255, 176), rgb565(64, 224, 152),  rgb565(200, 240, 216)},
+    {"Red LED",    false, rgb565(12, 4, 4),    rgb565(30, 7, 6),      rgb565(255, 56, 40),  rgb565(255, 72, 56),   rgb565(255, 200, 192)},
+    {"Purple LED", false, rgb565(9, 5, 15),    rgb565(24, 11, 36),    rgb565(186, 92, 255), rgb565(170, 100, 255), rgb565(226, 206, 255)},
+    {"Blue LED",   false, rgb565(3, 7, 15),    rgb565(6, 15, 32),     rgb565(64, 160, 255), rgb565(72, 168, 255),  rgb565(198, 226, 255)},
+    {"LCD",        false, rgb565(8, 9, 8),     rgb565(163, 189, 122), rgb565(24, 30, 20),   rgb565(120, 200, 96),  rgb565(214, 226, 190)},
 };
 constexpr int kColorSchemeCount = sizeof(color_schemes) / sizeof(color_schemes[0]);
 int selected_color_scheme = 0;
 bool setup_screen = false;
+
+// Screen regions to repaint on the next incremental redraw. A full redraw
+// clears them all.
+bool values_dirty = true;
+bool header_dirty = true;
+bool soft_keys_dirty = true;
 
 const ColorScheme& colors()
 {
@@ -91,6 +121,15 @@ bool angle_degrees = true;
 String format_number(double value)
 {
     if (!isfinite(value)) return "ERROR";
+
+    // Anything this small would round away to zero in fixed notation, so show
+    // it as a mantissa with four decimal places instead.
+    if (value != 0.0 && fabs(value) < kSmallValueThreshold) {
+        char buffer[16];
+        snprintf(buffer, sizeof(buffer), "%.4E", value);
+        return String(buffer);
+    }
+
     String result(value, 6);
     while (result.indexOf('.') >= 0 && result.endsWith("0")) result.remove(result.length() - 1);
     if (result.endsWith(".")) result.remove(result.length() - 1);
@@ -146,6 +185,17 @@ uint16_t mix_color(uint16_t a, uint16_t b, uint16_t percent)
     return (uint16_t)((red << 11) | (green << 5) | blue);
 }
 
+// Unlit segment and dot color: a hint of the foreground seen through the glass.
+uint16_t ghost_color()
+{
+    return mix_color(colors().display, colors().foreground, 18);
+}
+
+uint16_t grid_color()
+{
+    return mix_color(colors().display, colors().foreground, 10);
+}
+
 // Draws a single seven-segment glyph into a cell of width/height at (x0, y0).
 // Lit segments use on_color; unlit ones use off_color so the ghost segments
 // show through the LCD glass, as on a real display.
@@ -161,6 +211,9 @@ void draw_seven_char(int x0, int y0, int w, int h, int t, char c,
             case '.': separator = true; break;
             case '-': mask = kSegG; break;
             case 'E': mask = kSegA|kSegD|kSegE|kSegF|kSegG; break;
+            // A seven-segment cell cannot spell a capital R, so it borrows the
+            // conventional lowercase-r form that real LCDs use for "ErrOr".
+            case 'R': mask = kSegE|kSegG; break;
             case 'r': mask = kSegE|kSegG; break;
             case 'O': mask = kSegA|kSegB|kSegC|kSegD|kSegE|kSegF; break;
             case 'H': mask = kSegB|kSegC|kSegE|kSegF|kSegG; break;
@@ -256,6 +309,132 @@ void draw_seven_string(const String& text, int right_x, int center_y, int max_w,
     }
 }
 
+// Classic 5x7 dot matrix font: five column bytes per glyph, bit 0 is the top
+// dot. The leading space doubles as the fallback for unsupported characters.
+// Lowercase glyphs sit on the bottom five rows, with ascenders reaching row 0.
+const char kDotFontChars[] = " 0123456789.:+-EROnd";
+const uint8_t kDotFont[][5] = {
+    {0x00, 0x00, 0x00, 0x00, 0x00},  // ' '
+    {0x3E, 0x51, 0x49, 0x45, 0x3E},  // '0'
+    {0x00, 0x42, 0x7F, 0x40, 0x00},  // '1'
+    {0x42, 0x61, 0x51, 0x49, 0x46},  // '2'
+    {0x21, 0x41, 0x45, 0x4B, 0x31},  // '3'
+    {0x18, 0x14, 0x12, 0x7F, 0x10},  // '4'
+    {0x27, 0x45, 0x45, 0x45, 0x39},  // '5'
+    {0x3C, 0x4A, 0x49, 0x49, 0x30},  // '6'
+    {0x01, 0x71, 0x09, 0x05, 0x03},  // '7'
+    {0x36, 0x49, 0x49, 0x49, 0x36},  // '8'
+    {0x06, 0x49, 0x49, 0x29, 0x1E},  // '9'
+    {0x60, 0x60, 0x00, 0x00, 0x00},  // '.'
+    {0x00, 0x36, 0x36, 0x00, 0x00},  // ':'
+    {0x08, 0x08, 0x08, 0x08, 0x08},  // '-'
+    {0x08, 0x08, 0x3E, 0x08, 0x08},  // '+'
+    {0x7F, 0x49, 0x49, 0x49, 0x41},  // 'E'
+    {0x7F, 0x09, 0x19, 0x29, 0x46},  // 'R'
+    {0x3E, 0x41, 0x41, 0x41, 0x3E},  // 'O'
+    {0x78, 0x04, 0x04, 0x04, 0x7C},  // 'n'
+    {0x78, 0x44, 0x44, 0x04, 0x7F},  // 'd'
+};
+
+const uint8_t* dot_glyph(char c)
+{
+    if (c == '\0') return kDotFont[0];
+    const char* found = strchr(kDotFontChars, c);
+    return kDotFont[found == nullptr ? 0 : found - kDotFontChars];
+}
+
+// One character cell: five dot columns plus a one pixel gap.
+int dot_cell(int scale)
+{
+    return 5 * scale + 1;
+}
+
+int dot_string_width(int count, int scale)
+{
+    return count * dot_cell(scale) - 1;
+}
+
+// Right-aligns a dot matrix value to right_x, shrinking the dot scale from
+// base_scale down to 1 until the text fits an available width of max_w. Each
+// dot is drawn one pixel smaller than its slot so the gaps between dots keep
+// the pixel grid visible.
+void draw_dot_string(const String& text, int right_x, int center_y, int max_w,
+                     int base_scale, uint16_t on_color, uint16_t off_color)
+{
+    const int count = text.length();
+    if (count == 0) return;
+
+    int scale = base_scale;
+    while (scale > 1 && dot_string_width(count, scale) > max_w) --scale;
+
+    int x = right_x - dot_string_width(count, scale);
+    if (x < kPanelX + 8) x = kPanelX + 8;
+    const int y0 = center_y - 7 * scale / 2;
+    const int dot = max(1, scale - 1);
+
+    for (int i = 0; i < count; ++i) {
+        const uint8_t* glyph = dot_glyph(text[i]);
+        for (int col = 0; col < 5; ++col) {
+            for (int row = 0; row < 7; ++row) {
+                const uint16_t color = glyph[col] & (1 << row) ? on_color : off_color;
+                M5.Display.fillRect(x + col * scale, y0 + row * scale, dot, dot, color);
+            }
+        }
+        x += dot_cell(scale);
+    }
+}
+
+// Draws a register value with the renderer the active scheme asks for: the
+// seven-segment face, or a 5x7 dot matrix sized from the same row height.
+void draw_value(const String& text, int center_y, int height,
+                uint16_t on_color, uint16_t off_color)
+{
+    if (colors().dot_matrix) {
+        draw_dot_string(text, kValueRight, center_y, kValueMax, height / 7, on_color, off_color);
+    } else {
+        draw_seven_string(text, kValueRight, center_y, kValueMax, height, on_color, off_color);
+    }
+}
+
+// Draws a short label straight from the 5x7 bitmap font inside a rounded
+// frame, so status text reads as a badge instead of as a title. The glyphs are
+// solid pixels rather than a dot grid, which keeps the small text legible.
+void draw_bitmap_badge(const char* text, int right_x, int center_y, int scale,
+                       int pad_x, int pad_y, int radius,
+                       uint16_t frame_color, uint16_t fill_color, uint16_t text_color)
+{
+    const int count = (int)strlen(text);
+    if (count == 0) return;
+
+    const int text_w = dot_string_width(count, scale);
+    const int text_h = 7 * scale;
+    const int width = text_w + 2 * pad_x;
+    const int height = text_h + 2 * pad_y;
+    const int x0 = right_x - width;
+    const int y0 = center_y - height / 2;
+
+    // The fill always covers the shape; the outline only shows when the two
+    // colors differ, which keeps a solid badge free of a doubled edge.
+    M5.Display.fillRoundRect(x0, y0, width, height, radius, fill_color);
+    if (frame_color != fill_color) {
+        M5.Display.drawRoundRect(x0, y0, width, height, radius, frame_color);
+    }
+
+    int x = x0 + pad_x;
+    const int y = center_y - text_h / 2;
+    for (int i = 0; i < count; ++i) {
+        const uint8_t* glyph = dot_glyph(text[i]);
+        for (int col = 0; col < 5; ++col) {
+            for (int row = 0; row < 7; ++row) {
+                if (glyph[col] & (1 << row)) {
+                    M5.Display.fillRect(x + col * scale, y + row * scale, scale, scale, text_color);
+                }
+            }
+        }
+        x += dot_cell(scale);
+    }
+}
+
 void push(double v) {
     stack[3] = stack[2];
     stack[2] = stack[1];
@@ -279,7 +458,12 @@ void clear_calculator()
     calc_error = false;
     for (int i=0;i<4;i++) stack[i]=0;
     stack_depth = 0;
-    modifier_active = false;
+    values_dirty = true;
+    if (modifier_active) {
+        modifier_active = false;
+        header_dirty = true;
+        soft_keys_dirty = true;
+    }
 }
 
 void commit_entry();
@@ -411,20 +595,30 @@ void draw_soft_key(int index)
     }
 }
 
-void redraw_calculator()
+void draw_soft_keys()
 {
-    M5.Display.fillScreen(colors().background);
+    for (int index = 0; index < 6; ++index) {
+        draw_soft_key(index);
+    }
+}
 
+// The title strip is cleared first so the "2nd" badge can be removed again.
+void draw_header()
+{
+    M5.Display.fillRect(0, kHeaderTop, kScreenWidth, kHeaderHeight, colors().background);
     M5.Display.setFont(&fonts::FreeMonoBold12pt7b);
+    M5.Display.setTextColor(colors().ui_text, colors().background);
     M5.Display.setTextDatum(middle_left);
-    M5.Display.setTextColor(colors().ui_text, colors().background);
-    M5.Display.drawString("RPN", 8, 15);
+    M5.Display.drawString("RPN", 8, kHeaderCenter);
+    if (modifier_active) {
+        draw_bitmap_badge("2nd", kScreenWidth - 8, kHeaderCenter, 2, 4, 3, 6,
+                          colors().ui_text, colors().ui_text, colors().background);
+    }
+}
 
-    M5.Display.setTextDatum(middle_right);
-    M5.Display.setTextColor(colors().ui_text, colors().background);
-    M5.Display.drawString(modifier_active ? "2nd" : "", 312, 15);
-
-    // LCD bezel and glass panel.
+void draw_glass()
+{
+    // Dark grey bezel around the tinted glass panel.
     M5.Display.fillRoundRect(kDisplayX, kDisplayY, kDisplayWidth, kDisplayHeight, 6, kFrameOuter);
     M5.Display.fillRoundRect(kDisplayX + 3, kDisplayY + 3, kDisplayWidth - 6, kDisplayHeight - 6, 4, kFrameInner);
     M5.Display.fillRoundRect(kPanelX, kPanelY, kPanelW, kPanelH, 3, colors().display);
@@ -432,47 +626,81 @@ void redraw_calculator()
     M5.Display.fillRect(kPanelX, kPanelY, kPanelW, 2, glass_edge);
     M5.Display.fillRect(kPanelX, kPanelY + kPanelH - 2, kPanelW, 2, glass_edge);
 
-    const uint16_t ghost = mix_color(colors().display, colors().foreground, 18);
-    const uint16_t grid = mix_color(colors().display, colors().foreground, 10);
-
-    // Printed-glass register labels.
-    M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
-    M5.Display.setTextDatum(middle_left);
-    M5.Display.setTextColor(ghost, colors().display);
-    M5.Display.drawString("T", 18, kRowTCenter);
-    M5.Display.drawString("Z", 18, kRowZCenter);
-    M5.Display.drawString("Y", 18, kRowYCenter);
-    M5.Display.drawString("X", 18, kRowXCenter);
-
-    // Subtle register separators on the glass.
+    // Subtle register separators printed on the glass.
+    const uint16_t grid = grid_color();
     M5.Display.drawFastHLine(kPanelX + 4, kRowZCenter - kSmallRowHeight / 2 - 1, kPanelW - 8, grid);
     M5.Display.drawFastHLine(kPanelX + 4, kRowZCenter + kSmallRowHeight / 2 + 1, kPanelW - 8, grid);
     M5.Display.drawFastHLine(kPanelX + 4, kRowYCenter + kSmallRowHeight / 2 + 1, kPanelW - 8, grid);
+}
 
-    if (stack_depth > 3) {
-        draw_seven_string(format_number(stack[3]), kValueRight, kRowTCenter, kValueMax,
-                          kSmallRowHeight, colors().foreground, ghost);
-    }
-    if (stack_depth > 2) {
-        draw_seven_string(format_number(stack[2]), kValueRight, kRowZCenter, kValueMax,
-                          kSmallRowHeight, colors().foreground, ghost);
-    }
-    if (stack_depth > 1) {
-        draw_seven_string(format_number(stack[1]), kValueRight, kRowYCenter, kValueMax,
-                          kSmallRowHeight, colors().foreground, ghost);
-    }
+String register_text(const RegisterRow& row)
+{
+    if (row.index != 0) return format_number(stack[row.index]);
+    if (calc_error) return "ERROR";
+    if (entering) return entry;
+    return format_number(stack[0]);
+}
 
-    String x_display = calc_error ? "ERROR" : (entering ? entry : format_number(stack[0]));
-    draw_seven_string(x_display, kValueRight, kRowXCenter, kValueMax,
-                      kBigRowHeight, colors().foreground, ghost);
+// Repaints one register: its glass band, the printed label, and the value.
+void draw_register(const RegisterRow& row)
+{
+    M5.Display.fillRect(kPanelX, row.center_y - row.height / 2, kPanelW, row.height,
+                        colors().display);
 
-    for (int index = 0; index < 6; ++index) {
-        draw_soft_key(index);
+    const uint16_t ghost = ghost_color();
+    M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
+    M5.Display.setTextDatum(middle_left);
+    M5.Display.setTextColor(ghost, colors().display);
+    M5.Display.drawString(row.label, 18, row.center_y);
+
+    if (row.index != 0 && row.index >= stack_depth) return;
+    draw_value(register_text(row), row.center_y, row.height, colors().foreground, ghost);
+}
+
+void redraw_calculator()
+{
+    M5.Display.startWrite();
+    M5.Display.fillScreen(colors().background);
+    draw_header();
+    draw_glass();
+    for (int row = 0; row < kRegisterRowCount; ++row) {
+        draw_register(kRegisterRows[row]);
     }
+    draw_soft_keys();
+    M5.Display.endWrite();
+
+    header_dirty = false;
+    values_dirty = false;
+    soft_keys_dirty = false;
+}
+
+// Repaints only the regions whose state changed, so a keystroke no longer
+// blanks and rebuilds the whole screen.
+void redraw_dirty()
+{
+    if (!header_dirty && !values_dirty && !soft_keys_dirty) return;
+
+    M5.Display.startWrite();
+    if (header_dirty) {
+        draw_header();
+        header_dirty = false;
+    }
+    if (values_dirty) {
+        for (int row = 0; row < kRegisterRowCount; ++row) {
+            draw_register(kRegisterRows[row]);
+        }
+        values_dirty = false;
+    }
+    if (soft_keys_dirty) {
+        draw_soft_keys();
+        soft_keys_dirty = false;
+    }
+    M5.Display.endWrite();
 }
 
 void redraw_setup()
 {
+    M5.Display.startWrite();
     M5.Display.fillScreen(colors().background);
     for (int index = 0; index < kColorSchemeCount; ++index) {
         const int column = index % 3;
@@ -492,6 +720,13 @@ void redraw_setup()
                                      kSchemeBoxHeight + 6, 10, color_schemes[index].accent);
         }
     }
+    M5.Display.endWrite();
+}
+
+void redraw_current_screen()
+{
+    if (setup_screen) redraw_setup();
+    else redraw_calculator();
 }
 
 int soft_key_at(int x, int y)
@@ -502,12 +737,6 @@ int soft_key_at(int x, int y)
         if (x >= left && x < left + kSoftKeyWidth) return index;
     }
     return -1;
-}
-
-bool display_at(int x, int y)
-{
-    return x >= kDisplayX && x < kDisplayX + kDisplayWidth &&
-           y >= kDisplayY && y < kDisplayY + kDisplayHeight;
 }
 
 int color_scheme_at(int x, int y)
@@ -529,6 +758,7 @@ void handle_soft_key(int index)
     if (calc_error) clear_calculator();
     if (index == 5) {
         angle_degrees = !angle_degrees;
+        soft_keys_dirty = true;
         return;
     }
 
@@ -549,6 +779,7 @@ void handle_soft_key(int index)
             case 4: apply_unary(arctangent_degrees); break;
         }
     }
+    values_dirty = true;
 }
 
 void commit_entry()
@@ -567,12 +798,14 @@ void handle_key(char value)
         if (!entering || entry == "0") entry = "";
         entry += value;
         entering = true;
+        values_dirty = true;
         return;
     }
 
     if (value == '.') {
         if (!entering) { entry = "0"; entering = true; }
         if (entry.indexOf('.') < 0) entry += ".";
+        values_dirty = true;
         return;
     }
 
@@ -584,6 +817,8 @@ void handle_key(char value)
     if (value == 'M') {
         // M acts as the second-function modifier for the touch soft keys.
         modifier_active = !modifier_active;
+        header_dirty = true;
+        soft_keys_dirty = true;
         return;
     }
 
@@ -591,6 +826,7 @@ void handle_key(char value)
         commit_entry();
         push(kPi);
         entering = false;
+        values_dirty = true;
         return;
     }
 
@@ -601,6 +837,7 @@ void handle_key(char value)
         } else {
             stack[0] = -stack[0];
         }
+        values_dirty = true;
         return;
     }
 
@@ -610,12 +847,14 @@ void handle_key(char value)
         } else {
             push(stack[0]);    // ENTER duplicates the current X register.
         }
+        values_dirty = true;
         return;
     }
 
     if (value == '+' || value == '-' || value == '*' || value == '/') {
         commit_entry();
         if (!do_op(value)) calc_error = true;
+        values_dirty = true;
     }
 }
 
@@ -648,19 +887,21 @@ void loop()
 
     if (M5.BtnA.wasClicked()) {
         selected_color_scheme = (selected_color_scheme + 1) % kColorSchemeCount;
-        if (setup_screen) redraw_setup();
-        else redraw_calculator();
+        redraw_current_screen();
     } else if (M5.BtnC.wasClicked()) {
         selected_color_scheme = (selected_color_scheme + kColorSchemeCount - 1) % kColorSchemeCount;
-        if (setup_screen) redraw_setup();
-        else redraw_calculator();
+        redraw_current_screen();
+    } else if (M5.BtnB.wasClicked()) {
+        // Button B opens and closes the color scheme screen.
+        setup_screen = !setup_screen;
+        redraw_current_screen();
     }
 
     if (!setup_screen && calculator.update()) {
         char value = calculator.getChar();
         if (value != '\0') {
             handle_key(value);
-            redraw_calculator();
+            redraw_dirty();
         }
     }
 
@@ -674,14 +915,11 @@ void loop()
                     setup_screen = false;
                     redraw_calculator();
                 }
-            } else if (display_at(touch.x, touch.y)) {
-                setup_screen = true;
-                redraw_setup();
             } else {
                 const int index = soft_key_at(touch.x, touch.y);
                 if (index >= 0) {
                     handle_soft_key(index);
-                    redraw_calculator();
+                    redraw_dirty();
                 }
             }
         }
