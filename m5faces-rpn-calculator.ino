@@ -53,8 +53,10 @@ constexpr uint16_t rgb565(uint8_t red, uint8_t green, uint8_t blue)
     return ((red & 0xf8) << 8) | ((green & 0xfc) << 3) | (blue >> 3);
 }
 
-constexpr uint16_t kFrameOuter = rgb565(180, 180, 180);
-constexpr uint16_t kFrameInner = rgb565(220, 220, 220);
+constexpr uint16_t kFrameOuter = rgb565(56, 56, 58);
+constexpr uint16_t kFrameInner = rgb565(90, 90, 92);
+constexpr uint16_t kSoftKeyFace = rgb565(202, 202, 204);
+constexpr uint16_t kSoftKeyText = rgb565(20, 20, 22);
 
 struct ColorScheme {
     const char* name;
@@ -66,12 +68,12 @@ struct ColorScheme {
 };
 
 const ColorScheme color_schemes[] = {
-    {"Green LCD", TFT_BLACK, rgb565(8, 26, 10), rgb565(0, 255, 90), rgb565(0, 255, 90), rgb565(0, 255, 90)},
-    {"Purple LCD", TFT_BLACK, rgb565(26, 10, 38), rgb565(180, 80, 255), rgb565(180, 80, 255), rgb565(180, 80, 255)},
-    {"Blue LCD", TFT_BLACK, rgb565(4, 12, 26), rgb565(70, 175, 255), rgb565(70, 175, 255), rgb565(70, 175, 255)},
-    {"Red LCD", TFT_BLACK, rgb565(26, 6, 6), rgb565(255, 55, 55), rgb565(255, 55, 55), rgb565(255, 55, 55)},
-    {"Yellow LCD", TFT_BLACK, rgb565(24, 24, 4), rgb565(255, 255, 0), rgb565(255, 255, 0), rgb565(255, 255, 0)},
-    {"White LCD", TFT_BLACK, rgb565(18, 20, 24), TFT_WHITE, TFT_WHITE, TFT_WHITE},
+    {"EL Green",   rgb565(4, 10, 8),    rgb565(8, 30, 20),     rgb565(96, 255, 176), rgb565(64, 224, 152),  rgb565(200, 240, 216)},
+    {"Amber LED",  rgb565(12, 7, 2),    rgb565(30, 17, 4),     rgb565(255, 172, 32), rgb565(255, 176, 48),  rgb565(255, 214, 154)},
+    {"Red LED",    rgb565(12, 4, 4),    rgb565(30, 7, 6),      rgb565(255, 56, 40),  rgb565(255, 72, 56),   rgb565(255, 200, 192)},
+    {"Purple LED", rgb565(9, 5, 15),    rgb565(24, 11, 36),    rgb565(186, 92, 255), rgb565(170, 100, 255), rgb565(226, 206, 255)},
+    {"Blue LED",   rgb565(3, 7, 15),    rgb565(6, 15, 32),     rgb565(64, 160, 255), rgb565(72, 168, 255),  rgb565(198, 226, 255)},
+    {"LCD",        rgb565(8, 9, 8),     rgb565(163, 189, 122), rgb565(24, 30, 20),   rgb565(120, 200, 96),  rgb565(214, 226, 190)},
 };
 constexpr int kColorSchemeCount = sizeof(color_schemes) / sizeof(color_schemes[0]);
 int selected_color_scheme = 0;
@@ -134,23 +136,14 @@ constexpr uint8_t kSevenMasks[10] = {
     kSegA|kSegB|kSegC|kSegD|kSegF|kSegG,        // 9
 };
 
-uint16_t dimmed(uint16_t color, unsigned int shift)
+// Blends two RGB565 colors; percent is the weight of b in the result.
+uint16_t mix_color(uint16_t a, uint16_t b, uint16_t percent)
 {
-    const uint16_t red = (color >> 11) & 0x1F;
-    const uint16_t green = (color >> 5) & 0x3F;
-    const uint16_t blue = color & 0x1F;
-    const unsigned int s = shift > 5 ? 5 : shift;
-    return (uint16_t)(((red >> s) << 11) | ((green >> s) << 5) | (blue >> s));
-}
-
-uint16_t with_brightness(uint16_t color, uint16_t percent)
-{
-    const uint16_t red = ((color >> 11) & 0x1F) * percent;
-    const uint16_t green = ((color >> 5) & 0x3F) * percent;
-    const uint16_t blue = (color & 0x1F) * percent;
-    return (uint16_t)((((red + 127) / 255) << 11) |
-                      (((green + 127) / 255) << 5) |
-                      ((blue + 127) / 255));
+    const uint16_t inverse = 255 - percent;
+    const uint16_t red = (((a >> 11) & 0x1F) * inverse + ((b >> 11) & 0x1F) * percent + 127) / 255;
+    const uint16_t green = (((a >> 5) & 0x3F) * inverse + ((b >> 5) & 0x3F) * percent + 127) / 255;
+    const uint16_t blue = ((a & 0x1F) * inverse + (b & 0x1F) * percent + 127) / 255;
+    return (uint16_t)((red << 11) | (green << 5) | blue);
 }
 
 // Draws a single seven-segment glyph into a cell of width/height at (x0, y0).
@@ -399,11 +392,10 @@ bool power_y_to_x()
 void draw_soft_key(int index)
 {
     const int x = kSoftKeyLeft + index * (kSoftKeyWidth + kSoftKeyGap);
-    const uint16_t soft_key_background = with_brightness(colors().accent, 50);
-    M5.Display.fillRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, soft_key_background);
+    M5.Display.fillRoundRect(x, kSoftKeyY, kSoftKeyWidth, kSoftKeyHeight, 6, kSoftKeyFace);
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
     M5.Display.setTextDatum(middle_center);
-    M5.Display.setTextColor(colors().background, soft_key_background);
+    M5.Display.setTextColor(kSoftKeyText, kSoftKeyFace);
     if (index == 5) {
         M5.Display.drawString(angle_degrees ? "DEG" : "RAD", x + kSoftKeyWidth / 2,
                               kSoftKeyY + kSoftKeyHeight / 2);
@@ -436,11 +428,12 @@ void redraw_calculator()
     M5.Display.fillRoundRect(kDisplayX, kDisplayY, kDisplayWidth, kDisplayHeight, 6, kFrameOuter);
     M5.Display.fillRoundRect(kDisplayX + 3, kDisplayY + 3, kDisplayWidth - 6, kDisplayHeight - 6, 4, kFrameInner);
     M5.Display.fillRoundRect(kPanelX, kPanelY, kPanelW, kPanelH, 3, colors().display);
-    M5.Display.fillRect(kPanelX, kPanelY, kPanelW, 2, dimmed(colors().display, 1));
-    M5.Display.fillRect(kPanelX, kPanelY + kPanelH - 2, kPanelW, 2, dimmed(colors().display, 1));
+    const uint16_t glass_edge = mix_color(colors().display, colors().background, 35);
+    M5.Display.fillRect(kPanelX, kPanelY, kPanelW, 2, glass_edge);
+    M5.Display.fillRect(kPanelX, kPanelY + kPanelH - 2, kPanelW, 2, glass_edge);
 
-    const uint16_t ghost = dimmed(colors().foreground, 2);
-    const uint16_t grid = dimmed(colors().foreground, 5);
+    const uint16_t ghost = mix_color(colors().display, colors().foreground, 18);
+    const uint16_t grid = mix_color(colors().display, colors().foreground, 10);
 
     // Printed-glass register labels.
     M5.Display.setFont(&fonts::FreeMonoBold9pt7b);
@@ -488,10 +481,15 @@ void redraw_setup()
         const int y = kSchemeBoxTop + row * (kSchemeBoxHeight + kSchemeBoxGap);
         const bool selected = index == selected_color_scheme;
         M5.Display.fillRoundRect(x, y, kSchemeBoxWidth, kSchemeBoxHeight, 8,
-                                color_schemes[index].foreground);
+                                color_schemes[index].display);
+        M5.Display.setFont(&fonts::FreeMonoBold12pt7b);
+        M5.Display.setTextDatum(middle_center);
+        M5.Display.setTextColor(color_schemes[index].foreground, color_schemes[index].display);
+        M5.Display.drawString(String(index + 1), x + kSchemeBoxWidth / 2,
+                              y + kSchemeBoxHeight / 2);
         if (selected) {
             M5.Display.drawRoundRect(x - 3, y - 3, kSchemeBoxWidth + 6,
-                                     kSchemeBoxHeight + 6, 10, TFT_WHITE);
+                                     kSchemeBoxHeight + 6, 10, color_schemes[index].accent);
         }
     }
 }

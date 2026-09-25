@@ -39,13 +39,13 @@ The four-register stack is shown on a simulated LCD screen. A plastic bezel surr
 
 ## Display Settings
 
-Hardware button A cycles to the next color scheme, while button C cycles to the previous scheme. Alternatively, tap the calculator display to open the color settings screen and select one of the six color boxes:
+Hardware button A cycles to the next color scheme, while button C cycles to the previous scheme. Alternatively, tap the calculator display to open the color settings screen and select one of the six numbered color boxes:
 
-- Green
-- Purple
-- Blue
-- Red
-- Yellow
-- White
+1. Green electroluminescence
+2. Amber LED
+3. Red LED
+4. Purple LED
+5. Blue LED
+6. Liquid crystal display
 
-Each scheme recolors the LCD foreground, the off-segment ghosts, and the glass tint. The calculator uses a black background with the selected color for the screen and soft keys.
+Each scheme recolors the LCD foreground, the off-segment ghosts, and the glass tint. The calculator uses a black background with a dark grey display bezel and light grey soft keys for every scheme, and the soft key labels stay in inverse text.
